@@ -432,10 +432,10 @@ vr::TrackedDevicePose_t* OpenVRDirectMode::GetDevicePose( vr::TrackedDeviceIndex
 	return &m_rTrackedDevicePose[unDeviceIndex];
 }
 
-vr::VRControllerState_t* OpenVRDirectMode::GetControllerState( vr::TrackedDeviceIndex_t unControllerDeviceIndex ) {
-	vr::VRControllerState_t state;
+bool OpenVRDirectMode::GetControllerState( vr::TrackedDeviceIndex_t unControllerDeviceIndex, vr::VRControllerState_t* pControllerState ) {
+	return vr::VRSystem()->GetControllerState(unControllerDeviceIndex, pControllerState, sizeof(*pControllerState));
+}
 
-	vr::VRSystem()->GetControllerState(unControllerDeviceIndex, &state, sizeof( state ) );
-
-	return &state;
+bool OpenVRDirectMode::PollNextEvent(vr::VREvent_t* pEvent, uint32_t uncbVREvent ) {
+	return vr::VRSystem()->PollNextEvent(pEvent, uncbVREvent);
 }

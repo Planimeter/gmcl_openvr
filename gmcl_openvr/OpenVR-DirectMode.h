@@ -67,7 +67,8 @@ public:
 	virtual void GetViewParameters(uint32_t* w, uint32_t* h, float* aspect, float* fov );
 	virtual vr::TrackedDeviceIndex_t GetControllerIndex(vr::ETrackedControllerRole role);
 	virtual vr::TrackedDevicePose_t* GetDevicePose(vr::TrackedDeviceIndex_t unDeviceIndex);
-	virtual vr::VRControllerState_t* GetControllerState(vr::TrackedDeviceIndex_t unControllerDeviceIndex);
+	virtual bool GetControllerState(vr::TrackedDeviceIndex_t unControllerDeviceIndex, vr::VRControllerState_t* state);
+	virtual bool PollNextEvent(vr::VREvent_t* pEvent, uint32_t uncbVREvent);
 private:
 	IDirect3DDevice9Ex* m_pActualDevice;
 

@@ -5,6 +5,9 @@
 #include <d3dx9.h>
 #include "OpenVR-DirectMode.h"
 
+#define VR_TO_HAMMER 52.52100840336134
+#define EPSILON 0.0001
+
 bool searching = false;
 IDirect3DSurface9* surface;
 
@@ -28,15 +31,7 @@ HRESULT APIENTRY Present_hook(IDirect3DDevice9* pDevice, RECT* pSourceRect, RECT
 		}
 	}
 
-	if (surface)
-		forwarder->PrePresentEx(surface);
-
-	HRESULT hr = Present_orig(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
-
-	if (surface)
-		forwarder->PostPresentEx(surface);
-
-	return hr;
+	return Present_orig(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);;
 }
 
 HRESULT APIENTRY CreateTexture_hook(IDirect3DDevice9* pDevice, UINT w, UINT h, UINT levels, DWORD usage, D3DFORMAT format, D3DPOOL pool, IDirect3DTexture9** tex, HANDLE* shared_handle) {
@@ -176,29 +171,84 @@ Vector GetPosition(vr::HmdMatrix34_t matrix)
 {
 	Vector vector;
 
-	vector.x = -matrix.m[2][3] * 52.52100840336134;
-	vector.y = -matrix.m[0][3] * 52.52100840336134;
-	vector.z = matrix.m[1][3] * 52.52100840336134;
+	vector.x = matrix.m[0][3] * VR_TO_HAMMER;
+	vector.y = -matrix.m[2][3] * VR_TO_HAMMER;
+	vector.z = matrix.m[1][3] * VR_TO_HAMMER;
 
 	return vector;
 }
 
 QAngle GetRotation(vr::HmdMatrix34_t matrix)
 {	
-	vr::HmdQuaternion_t q;
-
-	q.x = sqrt(fmax(0, 1 + matrix.m[0][0] - matrix.m[1][1] - matrix.m[2][2])) / 2;
-	q.y = sqrt(fmax(0, 1 - matrix.m[0][0] + matrix.m[1][1] - matrix.m[2][2])) / 2;
-	q.z = sqrt(fmax(0, 1 - matrix.m[0][0] - matrix.m[1][1] + matrix.m[2][2])) / 2;
-	q.x = copysign(q.x, (double)matrix.m[2][1] - (double)matrix.m[1][2]);
-	q.y = copysign(q.y, (double)matrix.m[0][2] - (double)matrix.m[2][0]);
-	q.z = copysign(q.z, (double)matrix.m[1][0] - (double)matrix.m[0][1]);
-
 	QAngle a;
 
-	a.x = q.x;
-	a.y = q.y;
-	a.z = q.z;
+	Vector vr_forward;
+	vr_forward.x = -matrix.m[0][2];
+	vr_forward.y = -matrix.m[1][2];
+	vr_forward.z = -matrix.m[2][2];
+
+	Vector vr_right;
+	vr_right.x = matrix.m[0][0];
+	vr_right.y = matrix.m[1][0];
+	vr_right.z = matrix.m[2][0];
+
+	Vector vr_up;
+	vr_up.x = matrix.m[0][1];
+	vr_up.y = matrix.m[1][1];
+	vr_up.z = matrix.m[3][1];
+
+	Vector forward;
+	forward.x = vr_forward.x;
+	forward.y = -vr_forward.z;
+	forward.z = vr_forward.y;
+
+	Vector right;
+	right.x = vr_right.x;
+	right.y = -vr_right.z;
+	right.z = vr_right.y;
+
+	Vector up;
+	up.x = vr_up.x;
+	up.y = -vr_up.z;
+	up.z = vr_up.y;
+
+	float sr, sp, sy, cr, cp, cy;
+
+	sp = -forward.z;
+
+	float cp_x_cy = forward.x;
+	float cp_x_sy = forward.y;
+	float cp_x_sr = -right.z;
+	float cp_x_cr = up.z;
+
+	float yaw = atan2(cp_x_sy, cp_x_cy);
+	float roll = atan2(cp_x_sr, cp_x_cr);
+
+	cy = cos(yaw);
+	sy = sin(yaw);
+	cr = cos(roll);
+	sr = sin(roll);
+
+	if (abs(cy) > EPSILON)
+		cp = cp_x_cy / cy;
+	else if (abs(sy) > EPSILON)
+		cp = cp_x_sy / sy;
+	else if (abs(sr) > EPSILON)
+		cp = cp_x_sr / sr;
+	else if (abs(cr) > EPSILON)
+		cp = cp_x_cr / cr;
+	else
+		cp = cos(asin(sp));
+
+	float pitch = atan2(sp, cp);
+
+	float pi = 3.14159265359;
+
+	a.x = -(180 - (360 - (pitch / (pi * 2 / 360))));
+	a.y = -(180 - (yaw / (pi * 2 / 360)));
+	a.z = -(180 - (roll / (pi * 2 / 360)));
+
+	return a;
 }
 
 LUA_FUNCTION(Ready) {
@@ -226,7 +276,7 @@ LUA_FUNCTION(GetDevicePose) {
 	if (!forwarder)
 		return 0;
 	
-	vr::TrackedDeviceIndex_t index = LUA->CheckNumber();
+	vr::TrackedDeviceIndex_t index = LUA->CheckNumber( 1 );
 	vr::TrackedDevicePose_t* pose = forwarder->GetDevicePose(index);
 
 	Vector pos = GetPosition(pose->mDeviceToAbsoluteTracking);
@@ -243,8 +293,8 @@ LUA_FUNCTION(GetDevicePose) {
 	vel.z = pose->vAngularVelocity.v[2];
 
 	LUA->CreateTable();
-		PushMatrix(LUA, pose->mDeviceToAbsoluteTracking);
-		LUA->SetField(-2, "pose");
+		//PushMatrix(LUA, pose->mDeviceToAbsoluteTracking);
+		//LUA->SetField(-2, "pose");
 
 		LUA->PushVector(pos);
 		LUA->SetField(-2, "pos");
@@ -264,10 +314,64 @@ LUA_FUNCTION(GetControllerState) {
 	if (!forwarder)
 		return 0;
 
-	vr::TrackedDeviceIndex_t index = LUA->CheckNumber();
-	vr::VRControllerState_t* state = forwarder->GetControllerState(index);
+	vr::TrackedDeviceIndex_t index = LUA->CheckNumber(1);
+	vr::VRControllerState_t state;
+	
+	if (!forwarder->GetControllerState(index, &state))
+		return 0;
 
-	// convert to lua
+	LUA->CreateTable();
+		LUA->PushNumber(state.unPacketNum);
+		LUA->SetField(-2, "packet");
+
+		LUA->CreateTable();
+			for (int i = 0; i < 64; i++) {
+				LUA->PushNumber(i + 1);
+				LUA->PushBool( state.ulButtonPressed & (1ULL << i) );
+				LUA->SetTable(-3);
+			}
+		LUA->SetField(-2, "pressed");
+
+		LUA->CreateTable();
+			for (int i = 0; i < 64; i++) {
+				LUA->PushNumber(i + 1);
+				LUA->PushBool(state.ulButtonTouched & (1ULL << i) );
+				LUA->SetTable(-3);
+			}
+		LUA->SetField(-2, "touched");
+
+		LUA->CreateTable();
+			for (uint32_t i = 0; i < vr::k_unControllerStateAxisCount; i++) {
+				LUA->PushNumber(i + 1);
+				LUA->CreateTable();
+					LUA->PushNumber(state.rAxis[i].x);
+					LUA->SetField(-2, "x");
+
+					LUA->PushNumber(state.rAxis[i].y);
+					LUA->SetField(-2, "y");
+				LUA->SetTable(-3);
+			}
+		LUA->SetField(-2, "axes");
+	return 1;
+}
+
+LUA_FUNCTION(Submit) {
+	if (surface) {
+		forwarder->PrePresentEx(surface);
+		forwarder->PostPresentEx(surface);
+	}
+
+	return 0;
+}
+
+LUA_FUNCTION(Update) {
+	if (!forwarder)
+		return 0;
+
+	vr::VREvent_t e;
+	while (forwarder->PollNextEvent(&e, sizeof(e))) {};
+
+	return 0;
 }
 
 GMOD_MODULE_OPEN() {
@@ -292,6 +396,12 @@ GMOD_MODULE_OPEN() {
 
 			LUA->PushCFunction(GetControllerState);
 			LUA->SetField(-2, "GetControllerState");
+
+			LUA->PushCFunction(Update);
+			LUA->SetField(-2, "Update");
+
+			LUA->PushCFunction(Submit);
+			LUA->SetField(-2, "Submit");
 		LUA->SetField(-2, "vr");
 	LUA->Pop();
 

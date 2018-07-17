@@ -5,13 +5,92 @@ local aspect
 local fov
 local rt
 
+local mat = CreateMaterial( "vr", "UnlitGeneric", {
+	[ "$basetexture" ] = "vr"
+} ) 
+
 local function debugprint( str, x, y )
-	draw.SimpleTextOutlined( str, "DebugFixed", x, y, color_white, TEXT_ALIGN_LEFT, TEXt_ALIGN_BOTTOM, 1, color_black )
+	draw.SimpleTextOutlined( str, "DebugFixed", x, y, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_BOTTOM, 1, color_black )
 end
 
 RunConsoleCommand( "gmod_mcore_test", 0 )
 
+local RENDERING_VR = false
+
+local left_hand, right_hand
+
+hook.Add( "HUDPaint", "Test", function()
+	if not rt then return end
+
+	surface.SetDrawColor( color_white )
+	surface.SetMaterial( mat )
+	surface.DrawTexturedRectUV( 0, 0, ScrW(), ScrH(), 0, 0, 0.5, 1 )
+end )
+
+hook.Add( "CreateMove", "VRInput", function( cmd )
+	local head_pose = vr.GetDevicePose( vr.GetDeviceIndex( 1 ) )
+
+	local left_state = vr.GetControllerState( vr.GetDeviceIndex( 2 ) )
+	if not left_state then return end
+
+	local right_state = vr.GetControllerState( vr.GetDeviceIndex( 3 ) )
+	if not right_state then return end
+
+	local left_stick = left_state.axes[ 1 ]
+	local left_trigger = left_state.pressed[ 34 ]
+	local left_grip = left_state.pressed[ 3 ]
+	local left_click = left_state.pressed[ 33 ]
+	local x = left_state.pressed[ 8 ]
+	local y = left_state.pressed[ 2 ]
+
+	local right_stick = right_state.axes[ 1 ]
+	local right_trigger = right_state.pressed[ 34 ]
+	local right_grip = right_state.pressed[ 3 ]
+	local right_click = right_state.pressed[ 33 ]
+	local a = right_state.pressed[ 8 ]
+	local b = right_state.pressed[ 2 ]
+
+	cmd:SetViewAngles( head_pose.ang )
+	cmd:SetSideMove( left_stick.x * LocalPlayer():GetRunSpeed() )
+	cmd:SetForwardMove( left_stick.y * LocalPlayer():GetRunSpeed() )
+
+	local buttons = cmd:GetButtons()
+
+	if right_trigger then buttons = bit.bor( buttons, IN_ATTACK ) end
+	if right_grip then buttons = bit.bor( buttons, IN_ALT1 ) end
+	if right_click then buttons = bit.bor( buttons, IN_RELOAD ) end
+
+	if left_trigger then buttons = bit.bor( buttons, IN_ATTACK2 ) end
+	if left_grip then buttons = bit.bor( buttons, IN_ALT2 ) end
+	if left_click then buttons = bit.bor( buttons, IN_JUMP ) end
+
+	cmd:SetButtons( buttons )
+end )
+
+hook.Add( "Think", "VRHands", function()
+	vr.Update()
+
+	if not left_hand then
+		left_hand = ClientsideModel( "models/props_junk/PopCan01a.mdl" )
+	end
+
+	local left_pose = vr.GetDevicePose( vr.GetDeviceIndex( 2 ) )
+	left_hand:SetPos( LocalPlayer():GetPos() + left_pose.pos )
+	left_hand:SetAngles( left_pose.ang )
+
+	if not right_hand then
+		right_hand = ClientsideModel( "models/props_junk/PopCan01a.mdl" )
+	end
+
+	local right_pose = vr.GetDevicePose( vr.GetDeviceIndex( 3 ) )
+	right_hand:SetPos( LocalPlayer():GetPos() + right_pose.pos )
+	right_hand:SetAngles( right_pose.ang )
+
+end )
+
 hook.Add( "RenderScene", "RenderVR", function()
+	if RENDERING_VR then return end
+
 	if not vr.Ready() then return end
 
 	if not rt then
@@ -24,60 +103,12 @@ hook.Add( "RenderScene", "RenderVR", function()
 	if not rt then return end
 
 	local pose = vr.GetDevicePose( 0 )
-	--pose.pose[ 4 ] = { 0, 0, 0, 0 }
+	local pos = pose.pos
+	local ang = pose.ang
 
-	local pos = Vector()
-	pos.x = pose.pose[ 1 ][ 4 ] * 52.52100840336134
-	pos.y = -pose.pose[ 3 ][ 4 ] * 52.52100840336134
-	pos.z = pose.pose[ 2 ][ 4 ] * 52.52100840336134
+	pos = pos + LocalPlayer():GetPos()
 
-	local ang = Angle()
-
-	local vr_forward = Vector( -pose.pose[ 1 ][ 3 ], -pose.pose[ 2 ][ 3 ], -pose.pose[ 3 ][ 3 ] )
-	local vr_right = Vector( pose.pose[ 1 ][ 1 ], pose.pose[ 2 ][ 1 ], pose.pose[ 3 ][ 1 ] )
-	local vr_up = Vector( pose.pose[ 1 ][ 2 ], pose.pose[ 2 ][ 2 ], pose.pose[ 3 ][ 2 ] )
-
-	local forward = Vector( vr_forward.x, -vr_forward.z, vr_forward.y )
-	local right = Vector( vr_right.x, -vr_right.z, vr_right.y )
-	local up = Vector( vr_up.x, -vr_up.z, vr_up.y )
-
-    local sr, sp, sy, cr, cp, cy;
-
-	sp = -forward.z
-
-	local cp_x_cy = forward.x
-	local cp_x_sy = forward.y
-	local cp_x_sr = -right.z
-	local cp_x_cr = up.z
-
-	local yaw = math.atan2( cp_x_sy, cp_x_cy )
-	local roll = math.atan2( cp_x_sr, cp_x_cr )
-
-	cy = math.cos( yaw )
-	sy = math.sin( yaw )
-	cr = math.cos( roll )
-	sr = math.sin( roll )
-
-	local EPSILON = 0.0001
-
-	if (math.abs(cy) > EPSILON) then
-		cp = cp_x_cy / cy
-	elseif (math.abs(sy) > EPSILON) then
-		cp = cp_x_sy / sy
-	elseif (math.abs(sr) > EPSILON) then
-		cp = cp_x_sr / sr
-	elseif (math.abs(cr) > EPSILON) then
-		cp = cp_x_cr / cr
-	else
-		cp = math.cos( math.asin( sp ) )
-	end
-
-	local pitch = math.atan2( sp, cp );
-
-	ang.p = -math.NormalizeAngle( 180 - ( 360 - ( pitch / ( math.pi * 2 / 360 ) ) ) )
-	ang.y = -math.NormalizeAngle( 180 - ( yaw / ( math.pi * 2 / 360 ) ) )
-	ang.r = -math.NormalizeAngle( 180 - ( roll / ( math.pi * 2 / 360 ) ) )
-
+	--]]
 	--pose.ang.y = -pose.ang.y
 
 	--local ang = forward:Angle()
@@ -97,11 +128,15 @@ hook.Add( "RenderScene", "RenderVR", function()
 
 	--debugoverlay.Axis( vector_origin, ang, 16, 0.1, true )
 
+	RENDERING_VR = true
+
 	render.PushRenderTarget( rt )
 		render.RenderView{
 			origin = pos,
 			angles = ang,
+			drawviewmodel = true,
 			fov = fov,
+			viewmodelfov = fov,
 			aspectratio = aspect,
 			x = 0,
 			y = 0,
@@ -111,7 +146,9 @@ hook.Add( "RenderScene", "RenderVR", function()
 		render.RenderView{
 			origin = pos,
 			angles = ang,
+			drawviewmodel = true,
 			fov = fov,
+			viewmodelfov = fov,
 			aspectratio = aspect,
 			x = w / 2,
 			y = 0,
@@ -119,4 +156,8 @@ hook.Add( "RenderScene", "RenderVR", function()
 			h = h
 		}
 	render.PopRenderTarget( rt )
+
+	vr.Submit()
+
+	RENDERING_VR = false
 end )
